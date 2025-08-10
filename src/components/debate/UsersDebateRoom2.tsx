@@ -305,9 +305,11 @@ export const UsersDebateRoom: React.FC = () => {
     const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
     const recognition = new SpeechRecognition();
     
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true;  // Keep recording during pauses
+    recognition.interimResults = true;  // Show partial results
     recognition.lang = 'en-US';
+    
+    let finalTranscript = '';
     
     recognition.onstart = () => {
       setIsRecording(true);
@@ -315,20 +317,39 @@ export const UsersDebateRoom: React.FC = () => {
     };
     
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setArgument(prev => prev + (prev ? ' ' : '') + transcript);
-      setIsTranscribing(false);
+      let interimTranscript = '';
+      
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + ' ';
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+      
+      // Update the argument field with final transcript only
+      if (finalTranscript) {
+        setArgument(prev => prev + (prev ? ' ' : '') + finalTranscript.trim());
+        finalTranscript = '';
+      }
     };
     
     recognition.onerror = (event: any) => {
-      setVoiceError(`Voice recognition error: ${event.error}`);
-      setIsRecording(false);
-      setIsTranscribing(false);
+      // Only show error and stop if it's a real error, not just no-speech
+      if (event.error !== 'no-speech') {
+        setVoiceError(`Voice recognition error: ${event.error}`);
+        setIsRecording(false);
+        setIsTranscribing(false);
+      }
     };
     
     recognition.onend = () => {
-      setIsRecording(false);
-      setIsTranscribing(false);
+      // Only stop if we're not supposed to be recording anymore
+      if (isRecording) {
+        setIsRecording(false);
+        setIsTranscribing(false);
+      }
     };
     
     recognitionRef.current = recognition;
@@ -339,7 +360,7 @@ export const UsersDebateRoom: React.FC = () => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       setIsRecording(false);
-      setIsTranscribing(true);
+      setIsTranscribing(false);
     }
   };
 
@@ -1291,7 +1312,7 @@ export const UsersDebateRoom: React.FC = () => {
       {/* Always show header at the top */}
       <div className="w-full flex items-center justify-between px-6 py-4 bg-black/80 border-b border-gray-800" style={{position: 'sticky', top: 0, left: 0, zIndex: 50}}>
         <div className="flex items-center gap-4">
-          <div className="text-xl font-bold truncate max-w-[70vw]" title={debate?.topic || 'Loading...'}>{debate?.topic || 'Loading...'}</div>
+          <div className="text-lg font-bold max-w-[70vw] leading-tight break-words" title={debate?.topic || 'Loading...'}>{debate?.topic || 'Loading...'}</div>
           {/* Round Counter */}
           {debate && (
             <div className="flex items-center gap-2 text-sm text-gray-400">
@@ -1812,7 +1833,7 @@ export const UsersDebateRoom: React.FC = () => {
               <h2 className="text-2xl font-bold mb-2">Choose Your Side</h2>
               <h3 className="text-xl font-bold mb-2">Join the Tournament</h3>
               <p className="text-gray-400">Choose which side you want to argue for in this debate:</p>
-              <p className="text-lg font-semibold mt-2 text-blue-400">{debate?.topic}</p>
+              <p className="text-base font-semibold mt-2 text-blue-400 leading-tight break-words">{debate?.topic}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">

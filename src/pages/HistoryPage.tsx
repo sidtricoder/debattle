@@ -170,10 +170,37 @@ const HistoryPage: React.FC = () => {
       rawDiff = safeEndedAt - safeCreatedAt;
     }
     
+    // Determine result based on debate type
+    let result: 'win' | 'loss' | 'draw' = 'draw';
+    
+    // Check if this is a custom debate (has winningTeam field in judgment)
+    const winningTeam = (d.judgment as any)?.winningTeam;
+    if (winningTeam !== undefined) {
+      // Custom debate - check winningTeam
+      if (winningTeam === "" || winningTeam === "No Winner" || winningTeam === "draw") {
+        result = 'draw';
+      } else {
+        // Find user's stance in the debate
+        const userParticipant = d.participants.find((p: any) => p.userId === user?.uid);
+        const userStance = userParticipant?.stance; // should be 'pro' or 'con'
+        
+        if (userStance && winningTeam === userStance) {
+          result = 'win';
+        } else if (userStance && winningTeam !== userStance) {
+          result = 'loss';
+        } else {
+          result = 'draw'; // fallback if user stance is not found
+        }
+      }
+    } else {
+      // Regular debate - use existing logic
+      result = d.judgment?.winner === user?.uid ? 'win' : (d.judgment?.winner ? 'loss' : 'draw');
+    }
+
     return {
       ...d,
       date: new Date(safeEndedAt || safeCreatedAt || Date.now()),
-      result: d.judgment?.winner === user?.uid ? 'win' : (d.judgment?.winner ? 'loss' : 'draw'),
+      result: result,
       opponent: {
         name: opponentName,
         rating: opponent?.rating || 1200,
@@ -183,8 +210,12 @@ const HistoryPage: React.FC = () => {
       rawDiff, // add rawDiff to the returned object
       ratingChange,
       score: {
-        user: d.judgment?.scores?.[user?.uid || ''] || 0,
-        opponent: d.judgment?.scores?.[opponent?.userId || ''] || 0
+        user: (d.judgment as any)?.individualScores?.[user?.uid || ''] || 
+              (d.judgment as any)?.individualScores?.[user?.displayName || ''] ||
+              d.judgment?.scores?.[user?.uid || ''] || 0,
+        opponent: (d.judgment as any)?.individualScores?.[opponent?.userId || ''] || 
+                  (d.judgment as any)?.individualScores?.[opponent?.displayName || ''] ||
+                  d.judgment?.scores?.[opponent?.userId || ''] || 0
       },
       category: d.category
     };

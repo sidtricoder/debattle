@@ -671,24 +671,48 @@ export const DebateRoom: React.FC<DebateRoomProps> = ({ debateId: propDebateId }
     }
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true;  // Keep recording during pauses
+    recognition.interimResults = true;  // Show partial results
     recognition.lang = 'en-US';
     setIsRecording(true);
+    
+    let finalTranscript = '';
+    
     recognition.onresult = (event: any) => {
-      const transcript = Array.from(event.results)
-        .map((result: any) => result[0].transcript)
-        .join(' ');
-      setArgument((prev) => prev + (prev ? ' ' : '') + transcript);
-      setIsRecording(false);
+      let interimTranscript = '';
+      
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + ' ';
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+      
+      // Update the argument field with final transcript only
+      if (finalTranscript) {
+        setArgument((prev) => prev + (prev ? ' ' : '') + finalTranscript.trim());
+        finalTranscript = '';
+      }
     };
+    
     recognition.onerror = (event: any) => {
-      setVoiceError('Speech recognition error: ' + event.error);
-      setIsRecording(false);
+      // Only show error and stop if it's a real error, not just no-speech
+      if (event.error !== 'no-speech') {
+        setVoiceError('Speech recognition error: ' + event.error);
+        setIsRecording(false);
+      }
     };
+    
     recognition.onend = () => {
-      setIsRecording(false);
+      // Only stop if we're not supposed to be recording anymore
+      // This prevents auto-restart when continuous mode ends
+      if (isRecording) {
+        setIsRecording(false);
+      }
     };
+    
     try {
       recognition.start();
     } catch (err: any) {
@@ -922,7 +946,7 @@ export const DebateRoom: React.FC<DebateRoomProps> = ({ debateId: propDebateId }
       {/* Always show header at the top */}
       <div className="w-full flex items-center justify-between px-6 py-4 bg-black/80 border-b border-gray-800" style={{position: 'sticky', top: 0, left: 0, zIndex: 50}}>
         <div className="flex items-center gap-4">
-          <div className="text-xl font-bold truncate max-w-[70vw]" title={currentDebate?.topic || 'Loading...'}>{currentDebate?.topic || 'Loading...'}</div>
+          <div className="text-lg font-bold max-w-[70vw] leading-tight break-words" title={currentDebate?.topic || 'Loading...'}>{currentDebate?.topic || 'Loading...'}</div>
           {/* Practice Mode Timer */}
           {isPracticeMode && practiceTimeLeft !== null && isMyTurn && !isDebateCompleted && (
             <div className="flex items-center gap-2">

@@ -229,9 +229,11 @@ export const UsersDebateRoom: React.FC = () => {
     const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
     const recognition = new SpeechRecognition();
     
-    recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.continuous = true;  // Keep recording during pauses
+    recognition.interimResults = true;  // Show partial results
     recognition.lang = 'en-US';
+    
+    let finalTranscript = '';
     
     recognition.onstart = () => {
       setIsRecording(true);
@@ -239,20 +241,39 @@ export const UsersDebateRoom: React.FC = () => {
     };
     
     recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
-      setArgument(prev => prev + (prev ? ' ' : '') + transcript);
-      setIsTranscribing(false);
+      let interimTranscript = '';
+      
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + ' ';
+        } else {
+          interimTranscript += transcript;
+        }
+      }
+      
+      // Update the argument field with final transcript only
+      if (finalTranscript) {
+        setArgument(prev => prev + (prev ? ' ' : '') + finalTranscript.trim());
+        finalTranscript = '';
+      }
     };
     
     recognition.onerror = (event: any) => {
-      setVoiceError(`Voice recognition error: ${event.error}`);
-      setIsRecording(false);
-      setIsTranscribing(false);
+      // Only show error and stop if it's a real error, not just no-speech
+      if (event.error !== 'no-speech') {
+        setVoiceError(`Voice recognition error: ${event.error}`);
+        setIsRecording(false);
+        setIsTranscribing(false);
+      }
     };
     
     recognition.onend = () => {
-      setIsRecording(false);
-      setIsTranscribing(false);
+      // Only stop if we're not supposed to be recording anymore
+      if (isRecording) {
+        setIsRecording(false);
+        setIsTranscribing(false);
+      }
     };
     
     recognitionRef.current = recognition;
@@ -263,7 +284,7 @@ export const UsersDebateRoom: React.FC = () => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       setIsRecording(false);
-      setIsTranscribing(true);
+      setIsTranscribing(false);
     }
   };
 
@@ -668,6 +689,176 @@ export const UsersDebateRoom: React.FC = () => {
     }
   };
 
+  // Handle forfeit - immediately end debate with forfeit result
+  const handleForfeit = async () => {
+    if (!debate || !currentUser) return;
+    
+    try {
+      setIsJudging(true);
+      
+      // Find the opponent (the winner)
+      const opponent = debate.participants.find(p => p.userId !== currentUser.uid);
+      if (!opponent) {
+        console.error('No opponent found for forfeit');
+        return;
+      }
+      
+      // Create forfeit judgment with fixed scores: opponent gets 10, current user gets 0
+      const forfeitJudgment = {
+        winner: opponent.userId, // Opponent wins by forfeit
+        // Main scores structure (for compatibility)
+        scores: {
+          [opponent.userId]: 10.0,
+          [currentUser.uid]: 0.0
+        },
+        // Main feedback structure (for compatibility)
+        feedback: {
+          [opponent.userId]: [
+            "Won by forfeit - opponent gave up",
+            "Victory achieved without completing all rounds",
+            "Consider this a learning opportunity for future debates"
+          ],
+          [currentUser.uid]: [
+            "Forfeited the debate",
+            "Consider staying to complete debates for better learning",
+            "Practice building stronger arguments to avoid forfeit situations"
+          ]
+        },
+        reasoning: `Debate ended by forfeit. ${debate.participants.find(p => p.userId === currentUser.uid)?.displayName || 'Participant'} forfeited the debate, awarding victory to ${opponent.displayName || 'opponent'}.`,
+        fallaciesDetected: [], // Required field - empty for forfeit
+        highlights: [
+          `${opponent.displayName || 'Opponent'} won by forfeit`,
+          "Debate concluded before completion"
+        ],
+        learningPoints: [
+          "Complete debates for better learning experience",
+          "Build stronger arguments to avoid forfeit situations",
+          "Practice debate endurance and persistence"
+        ],
+        endReason: 'forfeit', // Mark this as a forfeit ending
+        forfeitedBy: currentUser.uid // Track who forfeited
+      };
+
+      // Calculate new ratings only if this is a 1v1 debate (exactly 2 participants)
+      let ratings: Record<string, number> | null = null;
+      let ratingChanges: Record<string, number> | null = null;
+      
+      if (debate.participants.length === 2) {
+        console.log('[DEBUG] Forfeit: Calculating ELO ratings for 1v1 debate');
+        try {
+          // Fetch current ratings for both participants if not available in debate
+          let currentRatings = debate.ratings;
+          if (!currentRatings) {
+            console.log('[DEBUG] Forfeit: No ratings in debate object, fetching from Firestore');
+            currentRatings = {};
+            for (const participant of debate.participants) {
+              try {
+                const userDoc = await getDoc(doc(firestore, 'users', participant.userId));
+                if (userDoc.exists()) {
+                  const userData = userDoc.data();
+                  currentRatings[participant.userId] = userData.rating || 1200;
+                } else {
+                  currentRatings[participant.userId] = 1200; // Default rating
+                }
+              } catch (error) {
+                console.error(`[DEBUG] Forfeit: Failed to fetch rating for ${participant.userId}:`, error);
+                currentRatings[participant.userId] = 1200; // Default rating
+              }
+            }
+          }
+
+          // Calculate new ratings based on forfeit (winner gets full rating gain)
+          ratings = calculateDebateRatings(currentRatings, opponent.userId);
+          ratingChanges = {} as Record<string, number>;
+          for (const userId of Object.keys(ratings)) {
+            const oldRating = currentRatings[userId];
+            const newRating = ratings[userId];
+            ratingChanges[userId] = newRating - oldRating;
+          }
+          console.log('[DEBUG] Forfeit: Calculated ratings:', { ratings, ratingChanges });
+        } catch (error) {
+          console.error('[DEBUG] Forfeit: Error calculating ratings:', error);
+          // Continue without rating changes if calculation fails
+        }
+      }
+
+      // Update debate with forfeit result
+      const updatedDebate = {
+        ...debate,
+        status: 'completed',
+        endedAt: Date.now(),
+        judgment: forfeitJudgment,
+        endReason: 'forfeit',
+        forfeitedBy: currentUser.uid,
+        ...(ratings && { ratings }),
+        ...(ratingChanges && { ratingChanges })
+      };
+
+      await updateDoc(doc(firestore, 'debates', debate.id), updatedDebate);
+
+      // Update user stats for all participants
+      if (debate.participants && Array.isArray(debate.participants)) {
+        for (const participant of debate.participants) {
+          const userRef = doc(firestore, 'users', participant.userId);
+          await runTransaction(firestore, async (transaction) => {
+            const userSnap = await transaction.get(userRef);
+            if (!userSnap.exists()) return;
+            
+            const userData = userSnap.data();
+            let wins = userData.wins || 0;
+            let losses = userData.losses || 0;
+            let draws = userData.draws || 0;
+            let gamesPlayed = userData.gamesPlayed || 0;
+            let rating = userData.rating || 1200;
+
+            // Determine result for this participant
+            if (participant.userId === opponent.userId) {
+              // This participant won by forfeit
+              wins += 1;
+              gamesPlayed += 1;
+            } else {
+              // This participant lost by forfeit
+              losses += 1;
+              gamesPlayed += 1;
+            }
+
+            // Update rating if calculated
+            if (ratings && ratings[participant.userId] !== undefined) {
+              rating = ratings[participant.userId];
+            }
+
+            // Calculate win_rate
+            const win_rate = gamesPlayed > 0 ? wins / gamesPlayed : 0;
+            
+            // Update provisional rating status
+            let provisionalRating = userData.provisionalRating;
+            if (gamesPlayed >= 5) provisionalRating = false;
+
+            const updateObj = {
+              wins,
+              losses,
+              draws,
+              gamesPlayed,
+              win_rate,
+              last_active: new Date(),
+              updated_at: new Date(),
+              provisionalRating,
+              rating
+            };
+
+            transaction.update(userRef, updateObj);
+          });
+        }
+      }
+
+      console.log('[DEBUG] Forfeit: Debate ended successfully');
+    } catch (error) {
+      console.error('Error forfeiting debate:', error);
+    } finally {
+      setIsJudging(false);
+    }
+  };
+
   // Auto end debate after MAX_ROUNDS
   useEffect(() => {
     if (!debate) return;
@@ -791,7 +982,7 @@ export const UsersDebateRoom: React.FC = () => {
       {/* Always show header at the top */}
       <div className="w-full flex items-center justify-between px-6 py-4 bg-black/80 border-b border-gray-800" style={{position: 'sticky', top: 0, left: 0, zIndex: 50}}>
         <div className="flex items-center gap-4">
-          <div className="text-xl font-bold truncate max-w-[70vw]" title={debate?.topic || 'Loading...'}>{debate?.topic || 'Loading...'}</div>
+          <div className="text-lg font-bold max-w-[70vw] leading-tight break-words" title={debate?.topic || 'Loading...'}>{debate?.topic || 'Loading...'}</div>
           {/* Round Counter */}
           {debate && (
             <div className="flex items-center gap-2 text-sm text-gray-400">
@@ -1022,6 +1213,15 @@ export const UsersDebateRoom: React.FC = () => {
           >
             <Clipboard className={`w-6 h-6 ${copySuccess ? 'text-white' : ''}`} />
           </button>
+          {/* Forfeit button */}
+          <Button
+            onClick={handleForfeit}
+            disabled={!debate || isSubmitting || isDebateCompleted || debate.participants.length < 2}
+            className={`px-6 py-2 rounded-xl font-semibold transition-all duration-300 flex items-center gap-2 bg-gradient-to-r from-red-600 to-red-700 text-white hover:from-red-700 hover:to-red-800 shadow-lg hover:shadow-xl mr-2 ${isDebateCompleted || debate.participants.length < 2 ? 'opacity-60 cursor-not-allowed' : ''}`}
+            title="Forfeit Debate - Immediately lose and end the debate"
+          >
+            <X className="w-5 h-5" />
+          </Button>
           {/* End Debate button on the left */}
           <Button
             onClick={handleEndDebate}
