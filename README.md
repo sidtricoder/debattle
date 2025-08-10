@@ -33,6 +33,19 @@ A modern, real-time debate platform built with React 19, TypeScript, and Vite. C
 - **Performance Optimized** - Code splitting, lazy loading, and optimized bundles
 - **SEO Ready** - Meta tags, structured data, and social sharing
 
+## 🏗️ Architecture
+
+![Architecture Diagram](architecture.svg)
+
+The Debattle platform follows a modern, scalable architecture with real-time capabilities:
+
+- **Frontend**: React 19 with TypeScript for type-safe, component-based UI
+- **State Management**: Zustand for efficient client-side state management
+- **Backend**: Firebase ecosystem providing authentication, real-time database, and cloud functions
+- **AI Services**: Google Gemini and Groq APIs for intelligent debate judging and feedback
+- **Real-time Communication**: Firebase Firestore real-time listeners for live debate updates
+- **Hosting**: Vercel for fast, global CDN deployment
+
 ## 🛠️ Tech Stack
 
 ### Frontend
