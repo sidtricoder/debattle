@@ -35,7 +35,7 @@ A modern, real-time debate platform built with React 19, TypeScript, and Vite. C
 
 ## 🏗️ Architecture
 
-![Architecture Diagram](architecture.svg)
+![Architecture Diagram](https://github.com/sidtricoder/debattle/blob/main/public/architecture.svg)
 
 The Debattle platform follows a modern, scalable architecture with real-time capabilities:
 
